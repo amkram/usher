@@ -5,6 +5,7 @@ project(strain_phylogenetics)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -std=c++11 -Wall -g -Wno-unused-function")
 set(CMAKE_INCLUDE_CURRENT_DIR ON) 
+set(CMAKE_CXX_FLAGS_DEBUG "-Og -fsanitize=address  -fsanitize=undefined -fsanitize=leak")
 
 if(DEFINED Protobuf_PATH) 
     find_package(Protobuf REQUIRED HINTS ${Protobuf_PATH}) 
@@ -29,25 +30,28 @@ FIND_PACKAGE(Boost COMPONENTS program_options iostreams filesystem REQUIRED)
 
 INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
 
+AUX_SOURCE_DIRECTORY(src/tree_rearrangements tree_rearrange_src) 
+file(GLOB MATUTIL_SRCS "src/matUtils/*.cpp" "src/matUtils/*.hpp")
+
 if(DEFINED Protobuf_PATH)
     add_executable(usher
+        src/Mutation_Collection.cpp
+        ${tree_rearrange_src}
         src/mutation_annotated_tree.cpp
         src/usher_mapper.cpp
         src/usher.cpp
         )
 
-    add_executable(matToVcf
+    add_executable(matUtils
         src/mutation_annotated_tree.cpp
-        src/matToVcf.cpp
+        src/usher_mapper.cpp
+        ${MATUTIL_SRCS}
         )
-
-    if(COMPILE_UTILS)
-        add_executable(matUtils
-            src/mutation_annotated_tree.cpp
-            src/matUtils.cpp
-            )
-    endif(COMPILE_UTILS)
-
+    
+    #add_executable(serializer_test
+    #    src/serializer_check.cpp
+    #    src/tree_rearrangements/Profitable_Move_Cacher.cpp
+    #)
     protobuf_generate(
         LANGUAGE cpp
         TARGET usher 
@@ -55,15 +59,8 @@ if(DEFINED Protobuf_PATH)
 
     protobuf_generate(
         LANGUAGE cpp
-        TARGET matToVcf
+        TARGET matUtils
         PROTOS parsimony.proto)
-
-    if(COMPILE_UTILS)
-        protobuf_generate(
-            LANGUAGE cpp
-            TARGET matUtils
-            PROTOS parsimony.proto)
-    endif(COMPILE_UTILS)
 else()
     protobuf_generate_cpp(
         PROTO_SRCS PROTO_HDRS
@@ -71,27 +68,29 @@ else()
 
     add_executable(usher
         src/mutation_annotated_tree.cpp
+        src/Mutation_Collection.cpp
+        ${tree_rearrange_src}
+        src/mutation_annotated_tree.cpp
         src/usher_mapper.cpp
         src/usher.cpp
         ${PROTO_SRCS}
         ${PROTO_HDRS}
         )
 
-    add_executable(matToVcf
+    add_executable(matUtils
         src/mutation_annotated_tree.cpp
-        src/matToVcf.cpp
+        src/usher_mapper.cpp
+        src/Mutation_Collection.cpp
+        ${MATUTIL_SRCS}
         ${PROTO_SRCS}
         ${PROTO_HDRS}
         )
-
-    if(COMPILE_UTILS)
-        add_executable(matUtils
-            src/mutation_annotated_tree.cpp
-            src/matUtils.cpp
-            ${PROTO_SRCS}
-            ${PROTO_HDRS}
-            )
-    endif(COMPILE_UTILS)
+        
+    #add_executable(serializer_test
+    #    src/serializer_check.cpp
+    #    src/tree_rearrangements/Profitable_Move_Cacher.cpp
+    #)
+    
 endif()
 
 if(SAVE_PROFILE)
@@ -109,11 +108,7 @@ else(SAVE_PROFILE)
 endif(SAVE_PROFILE)
 
 TARGET_LINK_LIBRARIES(usher PRIVATE stdc++  ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${Protobuf_LIBRARIES}) # OpenMP::OpenMP_CXX)
+#TARGET_LINK_LIBRARIES(serializer_test PRIVATE stdc++  ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${Protobuf_LIBRARIES}) # OpenMP::OpenMP_CXX)
 
-TARGET_COMPILE_OPTIONS(matToVcf PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-TARGET_LINK_LIBRARIES(matToVcf PRIVATE stdc++  ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${Protobuf_LIBRARIES}) # OpenMP::OpenMP_CXX)
-
-if(COMPILE_UTILS)
-    TARGET_COMPILE_OPTIONS(matUtils PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-    TARGET_LINK_LIBRARIES(matUtils PRIVATE stdc++  ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${Protobuf_LIBRARIES}) # OpenMP::OpenMP_CXX)
-endif(COMPILE_UTILS)
+TARGET_COMPILE_OPTIONS(matUtils PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+TARGET_LINK_LIBRARIES(matUtils PRIVATE stdc++  ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${Protobuf_LIBRARIES}) # OpenMP::OpenMP_CXX)

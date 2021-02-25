@@ -1,3 +1,4 @@
+#include <boost/program_options/value_semantic.hpp>
 #include <fstream>
 #include <algorithm>
 #include <numeric>
@@ -10,10 +11,10 @@
 #include "boost/filesystem.hpp"
 #include "usher_graph.hpp"
 #include "parsimony.pb.h"
-
+#include "tree_rearrangement.hpp"
 namespace po = boost::program_options;
 namespace MAT = Mutation_Annotated_Tree;
-
+uint32_t num_cores;
 int main(int argc, char** argv) {
     //Variables to load command-line options using Boost program_options
     std::string tree_filename;
@@ -21,7 +22,7 @@ int main(int argc, char** argv) {
     std::string dout_filename;
     std::string outdir;
     std::string vcf_filename;
-    uint32_t num_cores = tbb::task_scheduler_init::default_num_threads();
+    num_cores = tbb::task_scheduler_init::default_num_threads();
     uint32_t num_threads;
     uint32_t max_trees;
     uint32_t max_uncertainty;
@@ -32,6 +33,7 @@ int main(int argc, char** argv) {
     bool print_uncondensed_tree = false;
     bool print_parsimony_scores = false;
     bool retain_original_branch_len = false;
+    int refine_trees=0;
     size_t print_subtrees_size=0;
     po::options_description desc{"Options"};
 
@@ -41,6 +43,7 @@ int main(int argc, char** argv) {
         ("tree,t", po::value<std::string>(&tree_filename)->default_value(""), "Input tree file")
         ("outdir,d", po::value<std::string>(&outdir)->default_value("."), "Output directory to dump output and log files [DEFAULT uses current directory]")
         ("load-mutation-annotated-tree,i", po::value<std::string>(&din_filename)->default_value(""), "Load mutation-annotated tree object")
+        ("refine-tree",po::value<int>(&refine_trees))
         ("save-mutation-annotated-tree,o", po::value<std::string>(&dout_filename)->default_value(""), "Save output mutation-annotated tree object to the specified filename")
         ("sort-before-placement-1,s", po::bool_switch(&sort_before_placement_1), \
          "Sort new samples based on computed parsimony score and then number of optimal placements before the actual placement [EXPERIMENTAL].")
@@ -107,7 +110,7 @@ int main(int argc, char** argv) {
 
     if (print_parsimony_scores) {
         if (max_trees > 1) {
-            std::cerr << "ERROR: cannot use --multiple-placements (-M) and --print_parsimony_scores (-p) options simulaneously.\n";
+            std::cerr << "ERROR: cannot use --multiple-placements (-M) and --print_parsimony_scores (-p) options simultaneously.\n";
             return 1;
         }
     
@@ -159,7 +162,7 @@ int main(int argc, char** argv) {
 
     // Vector to store multiple trees, each corresponding to a different
     // possibility of a  parsimony-optimal placement, when --multiple-placements
-    // is used. Otherwise, this vector maintains a single tree througout the
+    // is used. Otherwise, this vector maintains a single tree throughout the
     // execution in which a tie-breaking strategy defined in usher_mapper is
     // used for multiple parsimony-optimal placements.
     std::vector<MAT::Tree> optimal_trees;
@@ -186,7 +189,7 @@ int main(int argc, char** argv) {
     // Map the node identifier string to index in the BFS traversal
     std::unordered_map<std::string, size_t> bfs_idx;
     
-    // Vectore to store the names of samples which have a high number of 
+    // Vector to store the names of samples which have a high number of 
     // parsimony-optimal placements
     std::vector<std::string> low_confidence_samples;
 
@@ -462,7 +465,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Writing condensed input tree to file %s\n", condensed_tree_filename.c_str());
         
         FILE* condensed_tree_file = fopen(condensed_tree_filename.c_str(), "w");
-        fprintf(condensed_tree_file, "%s\n", MAT::get_newick_string(*T, true, true, retain_original_branch_len).c_str());
+        fprintf(condensed_tree_file, "%s\n", MAT::get_newick_string(*T, T->root, true, true, retain_original_branch_len).c_str());
         fclose(condensed_tree_file);
 
         fprintf(stderr, "Completed in %ld msec \n\n", timer.Stop());
@@ -474,7 +477,7 @@ int main(int argc, char** argv) {
         
     // If samples found in VCF that are missing from the input tree, they are
     // now placed using maximum parsimony or if print_parsimony_score is set,
-    // the parsimony scores for placning the sample is printed (without the
+    // the parsimony scores for placing the sample is printed (without the
     // actual placement). 
     if (missing_samples.size() > 0) {
         
@@ -513,6 +516,10 @@ int main(int argc, char** argv) {
                 std::vector<size_t> num_best_placements;
 
                 for (size_t s=0; s<missing_samples.size(); s++) {
+
+                    //Sort the missing sample mutations by position
+                    std::sort(missing_sample_mutations[s].begin(), missing_sample_mutations[s].end());
+
                     auto dfs = T->depth_first_expansion();
                     size_t total_nodes = dfs.size();
 
@@ -529,7 +536,7 @@ int main(int argc, char** argv) {
                     // Stores the imputed mutations for ambiguous bases in the
                     // sampled in order to place the sample at each node of the 
                     // tree in DFS order. Again, guaranteed to be corrrect only 
-                    // for pasrimony-optimal nodes 
+                    // for parsimony-optimal nodes 
                     std::vector<std::vector<MAT::Mutation>> node_imputed_mutations(total_nodes);
 
                     // Stores the parsimony score to place the sample at each
@@ -542,7 +549,7 @@ int main(int argc, char** argv) {
                     size_t best_node_num_leaves = 0;
                     // The maximum number of mutations is bound by the number
                     // of mutations in the missing sample (place at root)
-                    //int best_set_difference = 1e9;
+                                       //int best_set_difference = 1e9;
                     // TODO: currently number of root mutations is also added to
                     // this value since it forces placement as child but this
                     // could be changed later 
@@ -657,8 +664,9 @@ int main(int argc, char** argv) {
                 // Stores the imputed mutations for ambiguous bases in the
                 // sampled in order to place the sample at each node of the 
                 // tree in DFS order. Again, guaranteed to be corrrect only 
-                // for pasrimony-optimal nodes 
+                // for parsimony-optimal nodes 
                 std::vector<std::vector<MAT::Mutation>> node_imputed_mutations(total_nodes);
+
 
                 std::vector<int> node_set_difference;
 
@@ -899,7 +907,8 @@ int main(int argc, char** argv) {
                             if (best_node->is_leaf() || best_node_has_unique) {
                                 std::string nid = std::to_string(++T->curr_internal_node);
                                 T->create_node(nid, best_node->parent->identifier);
-                                T->create_node(sample, nid);
+                                Mutation_Annotated_Tree::Node* new_node=T->create_node(sample, nid);
+                                T->new_nodes.push_back(new_node);
                                 T->move_node(best_node->identifier, nid);
                                 // common_mut stores mutations common to the
                                 // best node branch and the sample, l1_mut
@@ -974,7 +983,8 @@ int main(int argc, char** argv) {
                             }
                             // Else placement as child
                             else {
-                                T->create_node(sample, best_node->identifier);
+                                MAT::Node* new_node=T->create_node(sample, best_node->identifier);
+                                T->new_nodes.push_back(new_node);
                                 MAT::Node* node = T->get_node(sample);
                                 std::vector<MAT::Mutation> node_mut;
 
@@ -1021,6 +1031,13 @@ int main(int argc, char** argv) {
                                 }
                                 fprintf(stderr, "\n");
                             }
+
+                            for (auto anc: T->rsearch(sample, true)) {
+                                if (anc->clade != "") {
+                                    fprintf (stderr, "This sample falls under the clade: %s\n", anc->clade.c_str());
+                                    break;
+                                }
+                            }
                         }
                         
                         if (max_trees == 1) {
@@ -1034,7 +1051,7 @@ int main(int argc, char** argv) {
         }
         
     }
-
+    if(refine_trees) Tree_Rearrangement::refine_trees(optimal_trees,refine_trees);
     num_trees = optimal_trees.size();
             
     // If user specified print_parsimony_scores, close corresponding file and
@@ -1095,7 +1112,9 @@ int main(int argc, char** argv) {
             }
             auto parsimony_score = T->get_parsimony_score();
             fprintf(stderr, "The parsimony score for this tree is: %zu \n", parsimony_score);
-            //FILE* final_tree_file = fopen(final_tree_filename.c_str(), "w");
+            std::string final_tree_debug(final_tree_filename);
+            final_tree_debug.append("_debug");
+            T->write_newick_with_mutations( fopen(final_tree_debug.c_str(), "w"));
             //fprintf(final_tree_file, "%s\n", MAT::get_newick_string(*T, true, true, retain_original_branch_len).c_str());
             //fclose(final_tree_file);
             std::ofstream final_tree_file(final_tree_filename.c_str(), std::ofstream::out);
@@ -1207,6 +1226,24 @@ int main(int argc, char** argv) {
 
             T = &optimal_trees[t_idx];
 
+            // We split the subtree size into two: one half for nearest sequences to
+            // the samples and the other half randomly sampled
+            size_t random_subtree_size = print_subtrees_size/2;
+            size_t nearest_subtree_size = print_subtrees_size - random_subtree_size;
+
+
+            // Randomly shuffle the leaves for selecting the random subtree
+            auto all_leaves = T->get_leaves();
+            std::unordered_set<MAT::Node*> random_ordered_leaves(random_subtree_size);
+            for (size_t i=0; i< all_leaves.size(); i++) {
+                auto l = all_leaves.begin();
+                std::advance(l, rand() % all_leaves.size());
+                random_ordered_leaves.insert(*l);
+                if (random_ordered_leaves.size() >= print_subtrees_size) {
+                    break;
+                }
+            }
+
             // Bool vector to mark which newly placed samples have already been
             // displayed in a subtree (initialized to false)
             std::vector<bool> displayed_mising_sample (missing_samples.size(), false);
@@ -1226,77 +1263,58 @@ int main(int argc, char** argv) {
                     continue;
                 }
 
+                MAT::Node* last_anc = NULL;
+                std::vector<std::string> leaves_to_keep;
+
                 // Keep moving up the tree till a subtree of required size is
                 // found
                 for (auto anc: T->rsearch(missing_samples[i])) {
                     size_t num_leaves = T->get_num_leaves(anc);
-                    if (num_leaves < print_subtrees_size) {
+                    if (num_leaves < nearest_subtree_size) {
+                        last_anc = anc;
                         continue;
                     }
 
-                    // if subtree of required size or more is found, create a
-                    // copy of the subtree in new_T. Some tips may have to be
-                    // pruned to meet the specified size constraints 
-                    std::string newick = MAT::get_newick_string(*T, anc, false, true, retain_original_branch_len);
-                    MAT::Tree new_T = MAT::create_tree_from_newick_string(newick);
-
-                    // Map to store mutations for individual tree nodes in new_T
-                    std::unordered_map<MAT::Node*, std::vector<MAT::Mutation>> subtree_node_mutations;
-                    std::vector<MAT::Mutation> subtree_root_mutations;
-                    auto dfs1 = T->depth_first_expansion(anc);
-                    auto dfs2 = new_T.depth_first_expansion();
-
-                    assert(dfs1.size() == dfs2.size());
-
-                    for (size_t k = 0; k < dfs1.size(); k++) {
-                        auto n1 = dfs1[k];
-                        auto n2 = dfs2[k];
-                        subtree_node_mutations[n2] = n1->mutations;
-
-                        if (k == 0) {
-                            for (auto p: T->rsearch(n1->identifier)) {
-                                for (auto m: p->mutations) {
-                                    subtree_root_mutations.emplace_back(m);
-                                }
-                            }
-                            std::reverse(subtree_root_mutations.begin(), subtree_root_mutations.end());
+                    if (num_leaves > nearest_subtree_size) {
+                        for (auto l: T->get_leaves(last_anc->identifier)) {
+                            leaves_to_keep.emplace_back(l->identifier);
                         }
-                    }
 
-                    // Prune tips if number of tips (leaves) currently is above
-                    // the specified size in the subtree
-                    if (num_leaves > print_subtrees_size) {
-                        auto last_anc = new_T.get_node(missing_samples[i]);
-                        auto ancestors = new_T.rsearch(missing_samples[i]);
-                        if (ancestors.size() > 1) {
-                            last_anc = ancestors[ancestors.size()-2];
-                        }
                         std::vector<MAT::Node*> siblings;
-                        for (auto child: new_T.root->children) {
+                        for (auto child: anc->children) {
                             if (child->identifier != last_anc->identifier) {
                                 siblings.emplace_back(child);
                             }
                         }
 
                         for (size_t k=0; k<siblings.size(); k++) {
-                            auto curr_sibling = siblings[k];
-                            auto sibling_leaves = new_T.get_leaves(curr_sibling->identifier);
-                            if (num_leaves-sibling_leaves.size() < print_subtrees_size) {
-                                for (auto child: curr_sibling->children) {
-                                    siblings.emplace_back(child);
-                                }
-                            }
-                            else {
-                                new_T.remove_node(curr_sibling->identifier, true);
-                                num_leaves -= sibling_leaves.size();
-                                if (num_leaves == print_subtrees_size) {
-                                    break;
-                                }
+                            for (auto l: T->get_leaves(siblings[k]->identifier)) {
+                                leaves_to_keep.emplace_back(l->identifier);
                             }
                         }
 
-                        //newick = MAT::get_newick_string(new_T, true, true, retain_original_branch_len);
+                        leaves_to_keep.resize(nearest_subtree_size);
                     }
+                    else {
+                        for (auto l: T->get_leaves(anc->identifier)) {
+                            leaves_to_keep.emplace_back(l->identifier);
+                        }
+                    }
+
+                    // Add non-overlapping random subtree samples
+                    for (auto l: random_ordered_leaves) {
+                        if (leaves_to_keep.size() < print_subtrees_size) {
+                            if (std::find(leaves_to_keep.begin(), leaves_to_keep.end(), l->identifier) == leaves_to_keep.end()) {
+                                leaves_to_keep.emplace_back(l->identifier);
+                            }
+                        }
+
+                        if (leaves_to_keep.size() >= print_subtrees_size) {
+                            break;
+                        }
+                    }
+                    
+                    auto new_T = MAT::get_subtree(*T, leaves_to_keep);
 
                     tbb::parallel_for (tbb::blocked_range<size_t>(i+1, missing_samples.size(), 100),
                             [&](tbb::blocked_range<size_t> r) {
@@ -1336,24 +1354,11 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "Writing list of mutations at the nodes of subtree %d to file %s\n", num_subtrees, subtree_mutations_filename.c_str());
                     FILE* subtree_mutations_file = fopen(subtree_mutations_filename.c_str(), "w");
 
-                    // Mutations on root
-                    fprintf(subtree_mutations_file, "ROOT->%s: ", new_T.root->identifier.c_str());
-                    size_t tot_mutations = subtree_root_mutations.size();
-                    for (size_t idx = 0; idx < tot_mutations; idx++) {
-                        auto m = subtree_root_mutations[idx];
-                        fprintf(subtree_mutations_file, "%s", m.get_string().c_str());
-                        if (idx+1 <tot_mutations) {
-                            fprintf(subtree_mutations_file, ",");
-                        }
-                    }
-                    fprintf(subtree_mutations_file, "\n");
-
-                    // Mutations on remaining nodes
                     for (auto n: new_T.depth_first_expansion()) {
-                        size_t tot_mutations = subtree_node_mutations[n].size();
+                        size_t tot_mutations = n->mutations.size();
                         fprintf(subtree_mutations_file, "%s: ", n->identifier.c_str());
                         for (size_t idx = 0; idx < tot_mutations; idx++) {
-                            auto m = subtree_node_mutations[n][idx];
+                            auto m = n->mutations[idx];
                             fprintf(subtree_mutations_file, "%s", m.get_string().c_str());
                             if (idx+1 <tot_mutations) {
                                 fprintf(subtree_mutations_file, ",");
@@ -1446,9 +1451,12 @@ int main(int argc, char** argv) {
         }
     }
     */
-
+    #ifdef MEMDEBUG
+    for(MAT::Tree& t:optimal_trees){
+        t.delete_nodes();
+    }
     google::protobuf::ShutdownProtobufLibrary();
-
+    #endif
 #if SAVE_PROFILE == 1
     Instrumentor::Get().EndSession();
 #endif
